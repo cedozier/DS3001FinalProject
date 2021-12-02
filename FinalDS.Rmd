@@ -1,0 +1,109 @@
+---
+title: "Abortion Analysis"
+author: "Kylie Wise"
+date: "October 19 2021"
+output:
+  html_document:
+    code_folding: hide
+    toc: TRUE
+    theme: spacelab
+    toc_float: TRUE
+editor_options: 
+  chunk_output_type: console
+---
+
+
+## Data Cleaning 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(dplyr)
+library(tidyverse)
+
+```
+
+
+```{r}
+# read in data 
+SurveyResults <- read_excel("SurveyResults.xlsx")
+
+# subset important rows
+data <- SurveyResults[,c(3:10,17,18,20,21)]
+
+# rename columns
+colnames(data) <- c("country","gender","age","employment","edu","marital_status","household_income","chief_income_earner","close_lgbtq","attitude","had_abortion","religiosity")
+
+# set Na to NA
+data[data=="Na"] <- NA
+
+# remove all NA's
+data <- na.omit(data)
+
+table(data$attitude)
+
+# factor collapsing 
+data$employment<-fct_collapse(data$employment,
+                              student = "A student",
+                              employed = c("Full time", "Part time", "Self employed"),
+                              unemployed = c("Retired", "Unemployed", "Prefer not to answer")
+                              )
+
+# unique(data$employment), check that factor worked 
+
+data$attitude<-fct_collapse(data$attitude,
+legal = c("Abortion SHOULD be permitted whenever a woman decides she wants one","Abortion SHOULD be permitted in certain circumstances, such as if a woman has been raped"),
+unsure = "Don't know/Prefer not to say",
+illegal = c("Abortion should NOT be permitted under any circumstances, except when the life of the mother is in danger", "Abortion should NEVER be permitted, no matter what circumstance exists"))
+
+# unique(data$attitude), check that it worked 
+
+data$marital_status <- fct_collapse(data$marital_status,
+  married = c("Married", "Domestic partnership / Living as married"),
+  single = c("Single"),
+  other = c("Divorced", "Widowed"))
+
+# unique(data$marital_status), check that it worked 
+
+
+data$country <- fct_collapse(data$country,
+  north_america = c("United States", "Canada"), #1883
+  asia = c("India", "Japan", "South Korea", "China", "Russia"), #3477
+  europe = c("Great Britain", "Ireland", "Italy", "Hungary", "Belgium", "Sweden", "Spain", "Poland", "Turkey"), #5193
+  other = c("South Africa", "Australia")) #1501
+
+# unique(data$country)
+
+data$had_abortion <- fct_collapse(data$had_abortion,
+  No = "No",
+  Yes = "Yes",
+  Other = c("Not sure", "Prefer not to answer"))
+
+# unique(data$had_abortion), make sure that it worked 
+
+data$religiosity<-fct_collapse(data$religiosity,
+                               often = c("Every week", "More than once a week", "Nearly every week"),
+                               occasionally = c("Once a month", "Two to three times a month"),
+                               rarely = c("Several times a year", "Once a year", "Less than once a year"),
+                               never = c("Never", "Don’t know/no answer")
+                               )
+
+# unique(data$religiosity) # make sure that it worked 
+
+```
+
+
+## Exploratory Data Analysis 
+
+bar graph of attitude breakdown 
+
+descriptive summary table - Claire Dozier 
+
+bar graph protected class - male / female, age, etc. facet wrap by attitude 
+
+
+
+```{r}
+table(data$attitude)
+
+```
+
