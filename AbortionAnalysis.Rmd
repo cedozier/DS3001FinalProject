@@ -1,0 +1,143 @@
+---
+title: "Abortion Analysis"
+author: "Madeleine Ashby, Claire Dozier, Emma Murphy, Kylie Wise"
+date: "December 1 2021"
+output:
+  html_document:
+    code_folding: hide
+    toc: TRUE
+    theme: spacelab
+    toc_float: TRUE
+---
+
+
+## Data Cleaning 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+```
+
+
+```{r}
+# read in data 
+SurveyResults <- read_excel("C:/Users/Maddie/OneDrive/Desktop/3YEAR/Forked-DS-3001/FinalProj/SurveyAnswers.xlsx")
+
+# subset important rows
+data <- SurveyResults[,c(3:10,17,18,20,21)]
+
+# rename columns
+colnames(data) <- c("country","gender","age","employment","edu","marital_status","household_income","chief_income_earner","close_lgbtq","attitude","had_abortion","religiosity")
+
+# set Na to NA
+data[data=="Na"] <- NA
+
+# remove all NA's
+data <- na.omit(data)
+
+table(data$attitude)
+# factor collapsing 
+data$employment<-fct_collapse(data$employment,
+                              student = "A student",
+                              employed = c("Full time", "Part time", "Self employed"),
+                              unemployed = c("Retired", "Unemployed", "Prefer not to answer")
+                              )
+# unique(data$employment), check that factor worked 
+
+data$attitude<-fct_collapse(data$attitude,
+                            legal = c("Abortion SHOULD be permitted whenever a woman decides she wants one","Abortion SHOULD be permitted in certain circumstances, such as if a woman has been raped"),
+                            unsure = "Don't know/Prefer not to say",
+                            illegal = c("Abortion should NOT be permitted under any circumstances, except when the life of the mother is in danger", "Abortion should NEVER be permitted, no matter what circumstance exists")
+                            )
+# unique(data$attitude), check that it worked 
+
+data$marital_status <- fct_collapse(data$marital_status,
+                                    married = c("Married", "Domestic partnership / Living as married"),
+                                    single = c("Single"),
+                                    other = c("Divorced", "Widowed"))
+# unique(data$marital_status), check that it worked 
+
+data$country <- fct_collapse(data$country,
+                             north_america = c("United States", "Canada"), #1883
+                             asia = c("India", "Japan", "South Korea", "China", "Russia"), #3477
+                             europe = c("Great Britain", "Ireland", "Italy", "Hungary", "Belgium", "Sweden", "Spain", "Poland", "Turkey"), #5193
+                             other = c("South Africa", "Australia") #1501
+                             ) 
+# unique(data$country)
+
+data$had_abortion <- fct_collapse(data$had_abortion,
+                                  No = "No",
+                                  Yes = "Yes",
+                                  Other = c("Not sure", "Prefer not to answer")
+                                  )
+# unique(data$had_abortion), make sure that it worked 
+data$religiosity<-fct_collapse(data$religiosity,
+                               often = c("Every week", "More than once a week", "Nearly every week"),
+                               occasionally = c("Once a month", "Two to three times a month"),
+                               rarely = c("Several times a year", "Once a year", "Less than once a year"),
+                               never = c("Never", "Don’t know/no answer")
+                               )
+# unique(data$religiosity) # make sure that it worked 
+```
+
+
+## Exploratory Data Analysis 
+
+bar graph of attitude breakdown 
+
+descriptive summary table - Claire Dozier 
+
+bar graph protected class - male / female, age, etc. facet wrap by attitude 
+
+```{r}
+table(data$attitude)
+
+#Emma's EDA
+counts_gender <- table(data$gender, data$attitude)
+barplot(counts_gender, main="Attitude by Gender",
+        xlab="Gender", col=c("darkblue","red"),
+        legend = rownames(counts_gender), beside=TRUE)
+
+counts_country <- table(data$country, data$attitude)
+barplot(counts_country, main="Attitude by Country",
+        xlab="Country", col=c("darkblue","red", "green", "yellow"),
+        legend = rownames(counts_country), beside=TRUE)
+
+counts_education <- table(data$edu, data$attitude)
+barplot(counts_education, main="Attitude by Education",
+        xlab="Education", col=c("darkblue","red", "green"),
+        legend = rownames(counts_education), beside=TRUE)
+
+counts_abortion <- table(data$had_abortion, data$attitude)
+barplot(counts_abortion, main="Attitude by Whether or Not The Respondent or Someone Close to Respondent has had an Abortion",
+        xlab="Respondent or Someone Close to Respondent has had an Abortion",
+        col=c("darkblue","red", "green"),
+        legend = rownames(counts_abortion), beside=TRUE)
+
+counts_income <- table(data$household_income, data$attitude)
+barplot(counts_income, main="Attitude by Household Income",
+        xlab="Household Income", col=c("darkblue","red", "green"),
+        legend = rownames(counts_income), beside=TRUE)
+
+counts_breadwinner <- table(data$chief_income_earner, data$attitude)
+barplot(counts_breadwinner, main="Attitude by Whether or Not The Respondent is Breadwinner",
+        xlab="Whether or Not The Respondent is Breadwinner", col=c("darkblue","red"),
+        legend = rownames(counts_breadwinner), beside=TRUE)
+
+# Maddie's EDA
+ggplot(data, aes(x=gender, fill=gender)) + 
+  geom_bar() + 
+  facet_wrap(~attitude)
+
+ggplot(data, aes(x=age)) +
+  geom_bar(colour="salmon") +
+  facet_wrap(~attitude)
+
+ggplot(data, aes(x=age, fill=gender)) +
+  geom_bar() +
+  facet_wrap(~attitude)
+
+
+```
