@@ -70,9 +70,15 @@ colnames(data) <- c("country","gender","age","employment","edu","marital_status"
 # set Na to NA
 data[data=="Na"] <- NA
 
-# remove all NA's
-data <- na.omit(data)
+sapply(data, function(x) sum(is.na(x)))
 
+# remove all NA's
+#data <- na.omit(data)
+
+# Recode NAs
+data <- data %>% replace_na(list(employment = "Employment_Status_Unavailable", marital_status = "Marital_Status_Unavailable", household_income = "Income_Unavailable"))
+
+#sapply(data, function(x) sum(is.na(x)))
 
 # Remove observations where attitude = don't know
 data <- data[!(data$attitude == "Don't know/Prefer not to say"),]
@@ -81,8 +87,10 @@ data <- data[!(data$attitude == "Don't know/Prefer not to say"),]
 data$employment<-fct_collapse(data$employment,
                               student = "A student",
                               employed = c("Full time", "Part time", "Self employed"),
-                              unemployed = c("Retired", "Unemployed", "Prefer not to answer")
+                              unemployed = c("Retired", "Unemployed", "Prefer not to answer"),
+                              other = c("Employment_Status_Unavailable")
                               )
+
 # unique(data$employment), check that factor worked
 
 data$attitude<-fct_collapse(data$attitude,
@@ -97,14 +105,14 @@ illegal = c("Abortion should NOT be permitted under any circumstances, except wh
 data$marital_status <- fct_collapse(data$marital_status,
   married = c("Married", "Domestic partnership / Living as married"),
   single = c("Single"),
-  other = c("Divorced", "Widowed"))
+  other = c("Divorced", "Widowed", "Marital_Status_Unavailable"))
 
 # unique(data$marital_status), check that it worked 
 
 data$country <- fct_collapse(data$country,
-  north_america = c("United States", "Canada"), #1883
+  americas = c("United States", "Canada", "Argentina", "Brazil", "Mexico"), #1883
   asia = c("India", "Japan", "South Korea", "China", "Russia"), #3477
-  europe = c("Great Britain", "Ireland", "Italy", "Hungary", "Belgium", "Sweden", "Spain", "Poland", "Turkey"), #5193
+  europe = c("Great Britain", "Ireland", "Italy", "Hungary", "Belgium", "Sweden", "Spain", "Poland", "Turkey", "Germany", "France"), #5193
   other = c("South Africa", "Australia")) #1501
 
 # unique(data$country)
@@ -122,6 +130,13 @@ data$religiosity<-fct_collapse(data$religiosity,
                                rarely = c("Several times a year", "Once a year", "Less than once a year"),
                                never = c("Never", "Don’t know/no answer")
                                )
+
+# Update additional variables to factors
+data$gender <- as.factor(data$gender)
+data$edu <- as.factor(data$edu)
+data$household_income <- as.factor(data$household_income)
+data$chief_income_earner <- as.factor(data$chief_income_earner)
+data$close_lgbtq <- as.factor(data$close_lgbtq)
 
 # unique(data$religiosity) # make sure that it worked 
 str(data)
@@ -194,7 +209,7 @@ barplot(counts_abortion, main="Attitude by Whether or Not The Respondent or Some
 
 counts_income <- table(data$household_income, data$attitude)
 barplot(counts_income, main="Attitude by Household Income",
-        xlab="Household Income", col=c("darkblue","red", "green"),
+        xlab="Household Income", col=c("darkblue","red", "green", "yellow"),
         legend = rownames(counts_income), beside=TRUE)
 
 counts_breadwinner <- table(data$chief_income_earner, data$attitude)
@@ -227,7 +242,11 @@ ggplot(data, aes(x=age, fill=gender)) +
 
 ```{r}
 # Calculate the prevalence 
-prevalence <- 1 - (sum(data$attitude == 1) / nrow(data))
+target_table <- table(data$attitude)
+
+baserate <- target_table[[2]]/(target_table[[1]] + target_table[[2]])
+baserate
+
 ```
 
 
@@ -364,6 +383,11 @@ abortion_RF_mdl
 ## Tune the RF Model
 
 
+## Try an XGBoost model
+
+```{r}
+
+```
 
 
 # Final Model Evaluation 
