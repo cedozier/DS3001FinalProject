@@ -1,0 +1,454 @@
+---
+title: "DS 3001 Final Project: Predicting Attitudes Towards Abortion"
+author: "Maddie Ashby, Claire Dozier, Emma Murphy, Kylie Wise"
+date: "December 8, 2021"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Question and Background Information
+
+## Question and Context
+
+For our final project, we are imagining that we work in the office of a Congressperson. This congressperson is interested in using the demographic information obtained by conducting polls of their constituents. **The congressperson has asked the following question: "Given the demographic information available, can we use this data to predict whether particular constituents will think that abortion should be legal or illegal?"** If we can build an adequate model to predict these attitudes, this could be useful when creating targeted ads or outreach programs (with unknown data). The model may also be able to assist us in understanding whether particular demographic characteristics have more sway over abortion attitudes. 
+
+For the purposes of this project, we have treated attitudes towards abortion as a strict binary problem: people either think abortion should be legal or illegal. We understand that, in reality, people tend to have a more nuanced view of abortion legality. For example, a person may believe that it should be legal only when the life of the mother is in danger or if she has been raped. Therefore, this treatment of abortion views as a black-and-white issue does have limitations, but we wanted to see whether we could build a model that provides any predictive power/information. 
+
+## Data Background Information 
+
+The data we are using was obtained from an [Ipsos poll conducted on behalf of Buzzfeed](https://github.com/BuzzFeedNews/2015-06-ssm-and-abortion-poll) in the spring of 2015. The data cover 17,030 adults, ages 16–65, across 23 countries.
+
+Note that because the data was collected for Buzzfeed, there may be a liberal more pro-choice/abortion sway to the data, as seen by the distributions in the EDA below. The "legal" and "illegal" classes are very imbalanced, with significantly more observations for "legal" than "illegal." 
+
+The data contains a variety of demographic information including variables on gender, household income level, education level, employment status, marital status, whether the person knows someone in the LGBTQ community, if the person or someone close to them has had an abortion, their religiosity (how often do they attend religious services), and age. The variable that we are trying to predict as the target is the "attitude" variable which has the levels "legal" and "illegal." All variables excluding age are categorical factor variables. 
+
+## Previous Research and Relevance to Data 
+
+Attitudes towards abortion have been thoroughly researched by multiple outlets. One particularly good source of information is the [Pew Research Center in the U.S](https://www.pewresearch.org/fact-tank/2021/06/17/key-facts-about-the-abortion-debate-in-america/), which provides fairly balanced information on the subject (from a largely American perspective). According to Pew, in the U.S. around 6 in 10 adults (59%) think that abortion should be legal in all or most cases, and 39% say it should be illegal in all or most cases. This distribution highlights how our data (which has 84% legal and 16% illegal) has a more pro-abortion skew than the U.S. at large. Importantly, our data does include information from multiple countries in Europe, the Americas, and Asia, so this likely also significantly impacts the leanings of the data. 
+
+Additionally, in the U.S. Pew has found that views on abortion tend to vary widely by religious affiliation and level of religiosity. Evangelical protestants are much more likely to think that abortion should be illegal, while non-evangelical protestants tend to have a more liberal stance and tend believe that abortion should be legal. 
+
+# Data Preparation and Cleaning
+
+```{r Load libraries, include=FALSE}
+library(readxl)
+library(dplyr)
+library(tidyverse)
+library(gtsummary)
+library(ggplot2)
+library(randomForest)
+library(caret)
+library(rio)
+
+library(rpart)
+library(psych)
+library(pROC)
+library(rpart.plot)
+library(rattle)
+library(caret)
+library(C50)
+library(mlbench)
+
+```
+
+
+```{r warning = FALSE, console = FALSE, message=FALSE}
+
+# Read in data 
+SurveyResults <- read_excel("SurveyResults.xlsx")
+
+# Subset relevant columns
+data <- SurveyResults[,c(3:10,17,18,20,21)]
+
+# Rename columns
+colnames(data) <- c("country","gender","age","employment","edu","marital_status","household_income","chief_income_earner","close_lgbtq","attitude","had_abortion","religiosity")
+
+# set Na to NA
+data[data=="Na"] <- NA
+
+sapply(data, function(x) sum(is.na(x)))
+
+# remove all NA's
+#data <- na.omit(data)
+
+# Recode NAs
+data <- data %>% replace_na(list(employment = "Employment_Status_Unavailable", marital_status = "Marital_Status_Unavailable", household_income = "Income_Unavailable"))
+
+#sapply(data, function(x) sum(is.na(x)))
+
+# Remove observations where attitude = don't know
+data <- data[!(data$attitude == "Don't know/Prefer not to say"),]
+
+# Factor collapsing 
+data$employment<-fct_collapse(data$employment,
+                              student = "A student",
+                              employed = c("Full time", "Part time", "Self employed"),
+                              unemployed = c("Retired", "Unemployed", "Prefer not to answer"),
+                              other = c("Employment_Status_Unavailable")
+                              )
+
+# unique(data$employment), check that factor worked
+
+data$attitude<-fct_collapse(data$attitude,
+legal = c("Abortion SHOULD be permitted whenever a woman decides she wants one","Abortion SHOULD be permitted in certain circumstances, such as if a woman has been raped"),
+illegal = c("Abortion should NOT be permitted under any circumstances, except when the life of the mother is in danger", "Abortion should NEVER be permitted, no matter what circumstance exists"))
+
+#data$attitude <- recode(data$attitude, "legal" = "1", "illegal" = "0")
+#data$attitude <- as.factor(data$attitude)
+
+# unique(data$attitude), check that it worked 
+
+data$marital_status <- fct_collapse(data$marital_status,
+  married = c("Married", "Domestic partnership / Living as married"),
+  single = c("Single"),
+  other = c("Divorced", "Widowed", "Marital_Status_Unavailable"))
+
+# unique(data$marital_status), check that it worked 
+
+data$country <- fct_collapse(data$country,
+  americas = c("United States", "Canada", "Argentina", "Brazil", "Mexico"), #1883
+  asia = c("India", "Japan", "South Korea", "China", "Russia"), #3477
+  europe = c("Great Britain", "Ireland", "Italy", "Hungary", "Belgium", "Sweden", "Spain", "Poland", "Turkey", "Germany", "France"), #5193
+  other = c("South Africa", "Australia")) #1501
+
+# unique(data$country)
+
+data$had_abortion <- fct_collapse(data$had_abortion,
+  No = "No",
+  Yes = "Yes",
+  Other = c("Not sure", "Prefer not to answer"))
+
+# unique(data$had_abortion), make sure that it worked 
+
+data$religiosity<-fct_collapse(data$religiosity,
+                               often = c("Every week", "More than once a week", "Nearly every week"),
+                               occasionally = c("Once a month", "Two to three times a month"),
+                               rarely = c("Several times a year", "Once a year", "Less than once a year"),
+                               never = c("Never", "Don’t know/no answer")
+                               )
+
+# Update additional variables to factors
+data$gender <- as.factor(data$gender)
+data$edu <- as.factor(data$edu)
+data$household_income <- as.factor(data$household_income)
+data$chief_income_earner <- as.factor(data$chief_income_earner)
+data$close_lgbtq <- as.factor(data$close_lgbtq)
+
+# unique(data$religiosity) # make sure that it worked 
+str(data)
+```
+--> KYLIE EXPLAIN DATA CLEANING
+
+
+# Exploratory Data Analysis 
+
+## Calculate Prevalence 
+
+```{r}
+target_table <- table(data$attitude)
+target_table
+
+baserate <- target_table[[1]]/(target_table[[1]] + target_table[[2]])
+baserate
+```
+For this project, we have chosen the "positive" class to be "legal" and the "negative" class to be "illegal." As can be seen from the table above, there is a strong class imbalance in data, with the positive class dominating the negative class. The prevalence of the positive class is 0.8378, or approximately 84%. Thus, if we were to randomly guess we have an 84% change of correctly classifying an observation as a member of the positive class. 
+
+## High-Level Summary of Variables
+```{r}
+data %>% tbl_summary()
+```
+
+The above summary table provides a summary of the different variables in the dataset and their level distributions. 
+
+```{r}
+
+# histogram of age distribution for survey
+hist(data$age)
+
+# household income
+income_count <- data %>% count(household_income)
+
+ggplot(income_count, aes(x = household_income, y=n)) + 
+  geom_bar(stat = "identity")
+
+# abortion by employment
+
+ab_edu <- data %>% group_by(edu) %>% count(had_abortion)
+ggplot(ab_edu, aes(x = edu, y = n, fill = had_abortion)) +
+  geom_col(position = "dodge")
+
+
+# abortion by marriage
+ab_marriage <- data %>% group_by(marital_status) %>% count(had_abortion)
+ggplot(ab_marriage, aes(x = marital_status, y = n, fill = had_abortion)) +
+  geom_col(position = "dodge")
+
+# abortion and age
+ab_age <- data %>% group_by(age) %>% count(had_abortion)
+ab_age <- ab_age[ab_age$had_abortion == "Yes",]
+ggplot(ab_age, aes(x=as.factor(age), y = n)) +
+  geom_bar(stat="identity")
+
+```
+
+
+```{r}
+counts_gender <- table(data$gender, data$attitude)
+barplot(counts_gender, main="Attitude by Gender",
+        xlab="Gender", col=c("darkblue","red"),
+        legend = rownames(counts_gender), beside=TRUE)
+
+counts_country <- table(data$country, data$attitude)
+barplot(counts_country, main="Attitude by Country",
+        xlab="Country", col=c("darkblue","red", "green", "yellow"),
+        legend = rownames(counts_country), beside=TRUE)
+
+counts_education <- table(data$edu, data$attitude)
+barplot(counts_education, main="Attitude by Education",
+        xlab="Education", col=c("darkblue","red", "green"),
+        legend = rownames(counts_education), beside=TRUE)
+
+counts_abortion <- table(data$had_abortion, data$attitude)
+barplot(counts_abortion, main="Attitude by Whether or Not The Respondent or Someone Close to Respondent has had an Abortion",
+        xlab="Respondent or Someone Close to Respondent has had an Abortion",
+        col=c("darkblue","red", "green"),
+        legend = rownames(counts_abortion), beside=TRUE)
+
+counts_income <- table(data$household_income, data$attitude)
+barplot(counts_income, main="Attitude by Household Income",
+        xlab="Household Income", col=c("darkblue","red", "green", "yellow"),
+        legend = rownames(counts_income), beside=TRUE)
+
+counts_breadwinner <- table(data$chief_income_earner, data$attitude)
+barplot(counts_breadwinner, main="Attitude by Whether or Not The Respondent is Breadwinner",
+        xlab="Whether or Not The Respondent is Breadwinner", col=c("darkblue","red"),
+        legend = rownames(counts_breadwinner), beside=TRUE)
+
+counts_religiosity <- table(data$religiosity, data$attitude)
+barplot(counts_religiosity, main="Attitude by Whether or Not The Respondent is Religious",
+        xlab="Whether or Not The Respondent is Religious", col=c("darkblue","red", "green", "yellow"),
+        legend = rownames(counts_religiosity), beside=TRUE)
+```
+
+```{r}
+ggplot(data, aes(x=age)) +
+  geom_bar(colour="salmon") +
+  facet_wrap(~attitude)
+
+ggplot(data, aes(x=age, fill=gender)) +
+  geom_bar() +
+  facet_wrap(~attitude)
+```
+
+--> EXPLAIN EDA RESULTS
+
+# Methods: Model Building and Evaluation
+
+## Partition the Data
+
+```{r Partition the data}
+
+set.seed(2000)
+part_index_1 <- caret::createDataPartition(data$attitude,
+                                           times=1,
+                                           p = 0.70,
+                                           groups=1,
+                                           list=FALSE)
+
+train <- data[part_index_1, ]
+tune_and_test <- data[-part_index_1, ]
+
+
+tune_and_test_index <- caret::createDataPartition(tune_and_test$attitude,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+
+tune <- tune_and_test[tune_and_test_index, ]
+test <- tune_and_test[-tune_and_test_index, ]
+
+dim(train)
+dim(tune)
+dim(test)
+```
+
+## Build and Evaluate Initial Decision Tree Model
+
+```{r warning=FALSE, message=FALSE, console=FALSE}
+# Choose the features and classes
+features <- train[,c(-10)]
+target <- train$attitude
+
+# Cross validation process 
+fitControl <- trainControl(method = "repeatedcv",
+                          number = 10,
+                          repeats = 5, 
+                          returnResamp="all",
+                          classProbs = TRUE,
+                          allowParallel = TRUE) 
+
+grid <- expand.grid(.winnow = c(TRUE,FALSE), 
+                    .trials=c(1,5,10,15,20), 
+                    .model="tree")
+
+set.seed(2000)
+abortion_dt_mdl <- train(x=features,
+                y=target,
+                method="C5.0",
+                tuneGrid=grid,
+                trControl=fitControl,
+                verbose=TRUE)
+```
+
+```{r}
+abortion_dt_mdl
+```
+```{r}
+# visualize the re-sample distributions
+xyplot(abortion_dt_mdl,type = c("g", "p", "smooth"))
+varImp(abortion_dt_mdl)
+```
+
+```{r}
+# predict performance 
+abort_dt_pred_tune = predict(abortion_dt_mdl, tune, type= "raw")
+
+abort_dt_eval <- confusionMatrix(as.factor(abort_dt_pred_tune), 
+                as.factor(tune$attitude), 
+                dnn=c("Prediction", "Actual"), 
+                mode = "everything")
+
+table(tune$attitude)
+#(wine_pred_tune_p = predict(wine_mdl,tune,type= "prob"))
+abort_dt_eval 
+```
+## Build and Evalaute Initial Random Forest Ensemble Model
+```{r}
+mtry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  sqrt(xx)
+}
+
+mtry_tune(train)
+
+set.seed(1984)	
+abortion_RF_mdl = randomForest(attitude~.,          
+                            train,     
+                            #y = NULL,           
+                            #subset = NULL,      
+                            #xtest = NULL,       
+                            #ytest = NULL,       
+                            ntree = 100,  # 500 tree       
+                            mtry = 7,  # mtry = 3 (calculated above)          
+                            replace = TRUE,      
+                            #classwt = NULL,     
+                            #strata = NULL,      
+                            sampsize = 200,      
+                            nodesize = 5,        
+                            #maxnodes = NULL,    
+                            importance = TRUE,   
+                            #localImp = FALSE,   
+                            norm.votes = TRUE,   
+                            do.trace = TRUE,     
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)  
+```
+```{r}
+err.rate_mdl1 <- as.data.frame(abortion_RF_mdl$err.rate)
+err.rate_mdl1
+```
+
+
+```{r}
+abortion_RF_mdl
+```
+
+
+```{r Naive Bayes Model, warning=FALSE, message=FALSE, console=FALSE}
+library(klaR)
+# Choose the features and classes
+features_nb <- train[,c(-3, -10)]
+target_nb <- train$attitude
+
+str(features)
+str(target)
+
+# Cross validation process 
+fitControl_nb <- trainControl(method = "repeatedcv",
+                          number = 10,
+                          repeats = 5, 
+                          returnResamp="all",
+                          classProbs = TRUE,
+                          allowParallel = TRUE) 
+
+set.seed(2000)
+abortion_nb_mdl <- train(x=features_nb,
+                y=target_nb,
+                method="nb",
+                trControl=fitControl_nb,
+                verbose=TRUE)
+```
+```{r}
+abortion_nb_mdl
+```
+```{r}
+# predict performance 
+abort_nb_pred_tune = predict(abortion_nb_mdl, tune, type= "raw")
+
+abort_nb_eval <- confusionMatrix(as.factor(abort_nb_pred_tune), 
+                as.factor(tune$attitude), 
+                dnn=c("Prediction", "Actual"), 
+                mode = "everything")
+
+table(tune$attitude)
+#(wine_pred_tune_p = predict(wine_mdl,tune,type= "prob"))
+abort_nb_eval 
+```
+
+
+# Final Model Evaluation 
+
+discuss final model metrics, what information do we gain from the final model selected; how does the model perform on the test data
+
+
+# Conclusions
+
+discuss why Naive Bayes may perform better than decision trees with this data (prior probabilities - makes sense to try to use prior probabilities or prior observations to predict future observations) 
+
+discuss conclusions of the model 
+  - the models we were able to construct were not the most informative in predictive power, particularly for the negative (illegal) class
+  - we would not deploy this model without making modifications
+  - discuss overall important metrics (F1 score, sensitivity/specificity)
+
+
+
+# Future Work and Recommendations
+
+too many categorical, gather more balanced data; gather data with potentially more numeric information 
+
+imbalanced classes - could try alternate sampling methods for the data (upsampling or downsampling)
+
+make the problem a multi-class problem rather than a binary problem to capture more of the nuances of abortion views 
+
+potentially split data by region - may need separate models for different countries/areas due to very different views
+
+
+
+
+
+
+
+
+
+
