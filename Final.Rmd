@@ -1,0 +1,649 @@
+---
+title: "Predicting Attitudes Towards Abortion"
+author: "Maddie Ashby, Claire Dozier, Emma Murphy, Kylie Wise"
+date: "December 8, 2021"
+output:
+  html_document:
+    code_folding: hide
+    toc: TRUE
+    theme: spacelab
+    toc_float: TRUE
+editor_options: 
+  chunk_output_type: console
+---
+
+# Question and Background Information
+
+![](https://a.travel-assets.com/findyours-php/viewfinder/images/res40/471000/471637-Washington-Dc.jpg)
+
+## Question and Context
+
+For our final project, we are imagining that we work in the office of a Congressperson. This congressperson is interested in using the demographic information obtained by conducting polls of their constituents. **The congressperson has asked the following question: "Given the demographic information available, can we use this data to predict whether particular constituents will think that abortion should be legal or illegal?"** If we can build an adequate model to predict these attitudes, this could be useful when creating targeted ads or outreach programs (with unknown data). The model may also be able to assist us in understanding whether particular demographic characteristics have more sway over abortion attitudes. 
+
+For the purposes of this project, we have treated attitudes towards abortion as a strict binary problem: people either think abortion should be legal or illegal. We understand that, in reality, people tend to have a more nuanced view of abortion legality. For example, a person may believe that it should be legal only when the life of the mother is in danger or if she has been raped. Therefore, this treatment of abortion views as a black-and-white issue does have limitations, but we wanted to see whether we could build a model that provides any predictive power/information. 
+
+## Data Background Information 
+
+The data we are using was obtained from an [Ipsos poll conducted on behalf of Buzzfeed](https://github.com/BuzzFeedNews/2015-06-ssm-and-abortion-poll) in the spring of 2015. The data cover 17,030 adults, ages 16–65, across 23 countries.
+
+Note that because the data was collected for Buzzfeed (which tends to skew more liberal), there may be a liberal, or more pro-abortion sway to the data, as seen by the distributions in the EDA below. The "legal" and "illegal" classes are very imbalanced, with significantly more observations for "legal" than "illegal." 
+
+The data contains a variety of demographic information including variables on gender, household income level, education level, employment status, marital status, whether the person knows someone in the LGBTQ community, if the person or someone close to them has had an abortion, religiosity (measured by how often do they attend religious services), and age. The variable that we are trying to predict as our target variable is the "attitude" variable which has the levels "legal" and "illegal." All variables excluding age are categorical factor variables. 
+
+## Previous Research and Relevance to Data 
+
+Attitudes towards abortion have been thoroughly researched by multiple outlets. One particularly good source of information is the [Pew Research Center in the U.S](https://www.pewresearch.org/fact-tank/2021/06/17/key-facts-about-the-abortion-debate-in-america/), which provides fairly balanced information on the subject (from a largely American perspective). According to Pew, in the U.S. around 6 in 10 adults (59%) think that abortion should be legal in all or most cases, and 39% say it should be illegal in all or most cases. This distribution highlights how our data (which has 84% legal and 16% illegal) has a more pro-abortion skew than the U.S. at large. Importantly, our data does include information from multiple countries in Europe, the Americas, Asia, and beyond, so this likely also significantly impacts the leanings of the data. 
+
+Additionally, in the U.S., Pew has found that views on abortion tend to vary widely by religious affiliation and level of religiosity. Evangelical protestants are much more likely to think that abortion should be illegal, while non-evangelical protestants tend to have a more liberal stance and tend believe that abortion should be legal. 
+
+# Data Preparation and Cleaning
+
+We began by reading in our data. We then subset the relevant columns excluding columns that were not useful in helping us answer our guiding question regarding abortion attitude. We then replaced all empty/null values with "other", instead of excluding these rows so we had more data points that we could use to train, tune, and test our data with. Finally, we re-coded most of our variables to fit into a smaller number of groups so that our model would run more efficiently. After cleaning and simplifying our data, we were ready to move on to some exploratory data analysis.
+
+```{r Load libraries, include=FALSE}
+library(readxl)
+library(dplyr)
+library(tidyverse)
+library(gtsummary)
+library(ggplot2)
+library(randomForest)
+library(caret)
+library(rio)
+library(rpart)
+library(psych)
+library(pROC)
+library(rpart.plot)
+library(rattle)
+library(caret)
+library(C50)
+library(mlbench)
+library(klaR)
+library(gt)
+```
+
+
+```{r warning = FALSE, console = FALSE, message=FALSE}
+# Read in data 
+SurveyResults <- read_excel("SurveyResults.xlsx")
+
+# Subset relevant columns
+data <- SurveyResults[,c(3:10,17,18,20,21)]
+
+# Rename columns
+colnames(data) <- c("country","gender","age","employment","edu","marital_status","household_income","chief_income_earner","close_lgbtq","attitude","had_abortion","religiosity")
+
+# set Na to NA
+data[data=="Na"] <- NA
+# sapply(data, function(x) sum(is.na(x)))
+
+# remove all NA's
+#data <- na.omit(data)
+
+# Recode NAs
+data <- data %>% replace_na(list(employment = "Employment_Status_Unavailable", marital_status = "Marital_Status_Unavailable", household_income = "Income_Unavailable"))
+#sapply(data, function(x) sum(is.na(x)))
+
+# Remove observations where attitude = don't know
+data <- data[!(data$attitude == "Don't know/Prefer not to say"),]
+
+# Factor collapsing 
+data$employment<-fct_collapse(data$employment,
+                              student = "A student",
+                              employed = c("Full time", "Part time", "Self employed"),
+                              unemployed = c("Retired", "Unemployed", "Prefer not to answer"),
+                              other = c("Employment_Status_Unavailable")
+                              )
+
+# unique(data$employment), check that factor worked
+
+data$attitude<-fct_collapse(data$attitude,
+legal = c("Abortion SHOULD be permitted whenever a woman decides she wants one","Abortion SHOULD be permitted in certain circumstances, such as if a woman has been raped"),
+illegal = c("Abortion should NOT be permitted under any circumstances, except when the life of the mother is in danger", "Abortion should NEVER be permitted, no matter what circumstance exists"))
+
+#data$attitude <- recode(data$attitude, "legal" = "1", "illegal" = "0")
+#data$attitude <- as.factor(data$attitude)
+# unique(data$attitude), check that it worked 
+
+data$marital_status <- fct_collapse(data$marital_status,
+  married = c("Married", "Domestic partnership / Living as married"),
+  single = c("Single"),
+  other = c("Divorced", "Widowed", "Marital_Status_Unavailable"))
+# unique(data$marital_status), check that it worked 
+
+
+data$country <- fct_collapse(data$country,
+  americas = c("United States", "Canada", "Argentina", "Brazil", "Mexico"), #1883
+  asia = c("India", "Japan", "South Korea", "China", "Russia"), #3477
+  europe = c("Great Britain", "Ireland", "Italy", "Hungary", "Belgium", "Sweden", "Spain", "Poland", "Turkey", "Germany", "France"), #5193
+  other = c("South Africa", "Australia")) #1501
+# unique(data$country)
+
+
+data$had_abortion <- fct_collapse(data$had_abortion,
+  No = "No",
+  Yes = "Yes",
+  Other = c("Not sure", "Prefer not to answer"))
+# unique(data$had_abortion), make sure that it worked 
+
+
+data$religiosity<-fct_collapse(data$religiosity,
+                               often = c("Every week", "More than once a week", "Nearly every week"),
+                               occasionally = c("Once a month", "Two to three times a month"),
+                               rarely = c("Several times a year", "Once a year", "Less than once a year"),
+                               never = c("Never", "Don’t know/no answer")
+                               )
+
+
+# Update additional variables to factors
+data$gender <- as.factor(data$gender)
+data$edu <- as.factor(data$edu)
+data$household_income <- as.factor(data$household_income)
+data$chief_income_earner <- as.factor(data$chief_income_earner)
+data$close_lgbtq <- as.factor(data$close_lgbtq)
+
+# unique(data$religiosity) # make sure that it worked 
+# str(data)
+head(data) %>% gt()%>%
+  tab_header(title = "Data Preview") %>% tab_options(heading.align = "left")
+```
+
+
+# Exploratory Data Analysis 
+
+## Calculate Prevalence 
+
+For this project, we have chosen the "positive" class to be "legal" and the "negative" class to be "illegal." As is apparent in the table above, there is a strong class imbalance in data, with the positive class dominating the negative class. The prevalence of the positive class is 0.8378, or approximately 84%. Thus, if we were to randomly guess we have an 84% change of correctly classifying an observation as a member of the positive class. 
+
+```{r, results = FALSE}
+target_table <- table(data$attitude)
+target_table
+```
+```{r, results= FALSE}
+baserate <- target_table[[1]]/(target_table[[1]] + target_table[[2]])
+baserate
+```
+
+
+## High-Level Summary of Variables{.tabset}
+
+### Summary Table 
+```{r}
+data %>% tbl_summary()
+```
+
+The above summary table provides a summary of the different variables in the dataset and their distributions by level. 
+
+### Age Distribution
+```{r}
+# histogram of age distribution for survey
+hist(data$age, xlab = "Age", main = "Age Distribution")
+```
+
+This histogram shows the distribution of age for all respondents of the survey.
+
+### Household Income
+```{r}
+# household income
+income_count <- data %>% count(household_income)
+ggplot(income_count, aes(x = household_income, y=n)) + 
+  geom_bar(stat = "identity") + xlab("Household Income") +ylab("Count") +labs(title ="Household Income Distribution")
+```
+
+This bar graph displays the density of each category of household income.  We can clearly see that the majority of respondents come from households of medium and high income.
+
+## Attitudes by Demographic Metrics{.tabset}
+
+The following graphs depict attitude toward abortion in relation to various demographic metrics.
+
+### Education by Had Abortion
+
+```{r}
+# abortion by Education
+ab_edu <- data %>% group_by(edu) %>% count(had_abortion)
+ggplot(ab_edu, aes(x = edu, y = n, fill = had_abortion)) +
+  geom_col(position = "dodge") + labs(x = "Education", y = "Count", title = "Education by Had Abortion")
+```
+
+The above graph shows the number of respondents that have and have not had an abortion (or know someone that has), grouped by education level.  There does seem to be a general trend showing that respondents with higher education rates have not/do not know of anyone who had an abortion. However, this is also the case for lower and medium education levels as well, so it is not definitive as to whether or not these two variables are strongly correlated.
+
+### Marital Status
+```{r}
+# abortion by marriage
+ab_marriage <- data %>% group_by(marital_status) %>% count(had_abortion)
+ggplot(ab_marriage, aes(x = marital_status, y = n, fill = had_abortion)) +
+  geom_col(position = "dodge")+ labs(x = "Marital Status", y = "Count", title = "Marital Status by Had Abortion")
+```
+
+This graph is somewhat surprising in that a large number of married persons responded that they have had an abortion or know someone who has.  While it is important to note that the person who had an abortion is not necessarily married just because the respondent is, it is still rather shocking to see the difference between the married group and the single/other groups.  This will be an important observation that should be kept in mind moving forward.
+
+### Age
+
+```{r}
+# abortion and age
+ab_age <- data %>% group_by(age) %>% count(had_abortion)
+ab_age <- ab_age[ab_age$had_abortion == "Yes",]
+ggplot(ab_age, aes(x=as.factor(age), y = n)) +
+  geom_bar(stat="identity") + labs(x= "Age", y = "count", title = "Age Distribution")
+```
+
+This graph is surprising, as it reveals that 33 year old respondents in this survey had the most abortions (or knew the most people who had abortions).  It is interesting to see that this age is much higher than expected and thus is an important factor to keep in mind for future analysis.
+
+### Gender 
+
+```{r}
+counts_gender <- table(data$gender, data$attitude)
+barplot(counts_gender, main="Attitude by Gender",
+        xlab="Gender", col=c("darkblue","red"),
+        legend = rownames(counts_gender), beside=TRUE)
+```
+
+This graph is somewhat surprising, as we had anticipated a stronger relationship between gender and attitude for females specifically.
+
+### Geographic Region
+
+```{r}
+counts_country <- table(data$country, data$attitude)
+barplot(counts_country, main="Attitude by Country",
+        xlab="Country", col=c("darkblue","red", "green", "yellow"),
+        legend = rownames(counts_country), beside=TRUE)
+```
+
+This graph is illuminating, as we had not anticipated Europe being so pro-abortion when compared to other continents.  There appears to be a trend here, which we will further investigate later.
+
+### Education
+
+```{r}
+counts_education <- table(data$edu, data$attitude)
+barplot(counts_education, main="Attitude by Education",
+        xlab="Education", col=c("darkblue","red", "green"),
+        legend = rownames(counts_education), beside=TRUE)
+```
+
+The above graph demonstrated a correlation between rates of education and attitudes toward abortion.  As seen here, those with higher rates of education seem to be more favorable to abortion.  That being said, this  graph also reveals the lower response rate among persons with lower education.  As such, we will further examine the cross-section of attitude and education to understand how significant the correlation is.
+
+### Had/Know Someone w/ Abortion
+
+```{r}
+counts_abortion <- table(data$had_abortion, data$attitude)
+barplot(counts_abortion, main="Attitude by Whether The Respondent \n or Someone Close to Respondent has had an Abortion",
+        xlab="Respondent or Someone Close to Respondent has had an Abortion",
+        col=c("darkblue","red", "green"),
+        legend = rownames(counts_abortion), beside=TRUE)
+```
+
+This graph is not surprising, as we had anticipated that persons who either had an abortion themselves or who are close to someone who did, would be more favorable to legalization of abortion.
+
+
+### Household Income
+```{r}
+counts_income <- table(data$household_income, data$attitude)
+barplot(counts_income, main="Attitude by Household Income",
+        xlab="Household Income", col=c("darkblue","red", "green", "yellow"),
+        legend = rownames(counts_income), beside=TRUE)
+```
+
+This graph does not suggest a strong correlation between household income and attitude towards abortion.
+
+### Chief Income Earner 
+
+```{r}
+counts_breadwinner <- table(data$chief_income_earner, data$attitude)
+barplot(counts_breadwinner, main="Attitude by Whether or Not The Respondent is Breadwinner",
+        xlab="Whether or Not The Respondent is Breadwinner", col=c("darkblue","red"),
+        legend = rownames(counts_breadwinner), beside=TRUE)
+```
+
+This graph also does not suggest a relationship between whether or not the respondent is the chief income earner and attitude towards abortion.
+
+### Religiosity
+
+```{r}
+counts_religiosity <- table(data$religiosity, data$attitude)
+barplot(counts_religiosity, main="Attitude by Whether or Not The Respondent is Religious",
+        xlab="Whether or Not The Respondent is Religious", col=c("darkblue","red", "green", "yellow"),
+        legend = rownames(counts_religiosity), beside=TRUE)
+```
+
+This graph was not surprising in that it is logical that those who rarely or never attend religious services/worship favor the legalization of abortion. Thus, there does appear to be a strong correlation between religiosity and attitude towards abortion.
+
+### Age & Gender 
+
+```{r}
+ggplot(data, aes(x=age, fill=gender)) +
+  geom_bar() +
+  facet_wrap(~attitude)
+```
+
+This graph shows the number of people in favor of and not in favor of the legalization of abortion, categorized by their age and further categorized by gender.  As previously observed, there is a relatively even split between male and female for each attitude (legal / illegal), and this did not change when the subjects were divided by age.  It is once again surprising to see the lack of strong correlation between these variables and attitude towards abortion.
+
+## EDA Conclusions
+
+Through this exploratory data analysis, we are able to determine which variables will be useful in predicting attitude toward abortion.  The usefulness of a variable is based on the apparent correlation examined in each of the above figures.  As such, we believe that religiosity, whether or not the respondent had/knew of someone who had an abortion, country, and education level will be rather useful features in our model.  Moreover, despite our original belief that gender would have a significant impact on a person's attitude toward abortion, we now know that gender is not an extremely useful predictor.  From here we can proceed with this knowledge and begin to build our decision tree model. 
+
+# Methods: Model Building and Evaluation
+
+## Partition the Data & Build Decision Tree
+
+We first split the data into test, train, and tune subsets. 70% of our data was used to train then 15% to tune and 15% to test. 
+
+```{r Partition the data, results = "hide"}
+set.seed(2000)
+part_index_1 <- caret::createDataPartition(data$attitude,
+                                           times=1,
+                                           p = 0.70,
+                                           groups=1,
+                                           list=FALSE)
+train <- data[part_index_1, ]
+tune_and_test <- data[-part_index_1, ]
+tune_and_test_index <- caret::createDataPartition(tune_and_test$attitude,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+tune <- tune_and_test[tune_and_test_index, ]
+test <- tune_and_test[-tune_and_test_index, ]
+dim(train)
+dim(tune)
+dim(test)
+```
+
+
+```{r Initial Decision Tree Model, warning=FALSE, message=FALSE, console=FALSE}
+# Choose the features and classes
+features <- train[,c(-10)]
+target <- train$attitude
+# Cross validation process 
+fitControl <- trainControl(method = "repeatedcv",
+                          number = 10,
+                          repeats = 5, 
+                          returnResamp="all",
+                          classProbs = TRUE,
+                          allowParallel = TRUE) 
+grid <- expand.grid(.winnow = c(TRUE,FALSE), 
+                    .trials=c(1,5,10,15,20), 
+                    .model="tree")
+set.seed(2000)
+abortion_dt_mdl <- train(x=features,
+                y=target,
+                method="C5.0",
+                tuneGrid=grid,
+                trControl=fitControl,
+                verbose=TRUE)
+```
+
+
+## Decision Tree Outputs{.tabset}
+
+### Model Output
+```{r Initial Tree Model Output}
+# Initial tree model output
+abortion_dt_mdl
+```
+### Variable Importance 
+
+```{r}
+varImp(abortion_dt_mdl)
+```
+
+
+### Re-Sampling Distributions
+```{r sample distributions, message = FALSE, warning = FALSE}
+# visualize the re-sample distributions
+xyplot(abortion_dt_mdl,type = c("g", "p", "smooth"))
+```
+### Variable Importance
+```{r variable importance, message = FALSE, }
+varImp(abortion_dt_mdl)
+```
+### Confusion Matrix
+```{r}
+# predict performance using tune dataset 
+abort_dt_pred_tune = predict(abortion_dt_mdl, tune, type= "raw")
+abort_dt_eval <- confusionMatrix(as.factor(abort_dt_pred_tune), 
+                as.factor(tune$attitude), 
+                dnn=c("Prediction", "Actual"), 
+                mode = "everything")
+table(tune$attitude)
+abort_dt_eval 
+```
+## Decision Tree Analysis
+
+The initial tree model obtained through repeated cross validation found the optimal model (based on accuracy) to be one that has trials = 1, model = tree and winnow = FALSE. Within the model the most important variable that was used in 100% of the models was the "religiosity" variable. Logically, based on our background research and EDA it makes sense that this variable is highly deterministic as abortion attitudes tend to vary greatly depending on religious affiliation and strength of religious beliefs. The second most important variable was "country," followed by "employment" and "close_lqbtq." However, all three of these variables were used in significantly fewer of the models. 
+
+For this problem we are mainly interested in the values of the following metrics: sensitivity, specificity, and F1 score. We care about the F1 score because the target classes in this dataset are highly imbalanced, with there being many more "legal" observations than "illegal" observations. We also want to maximize the sensitivity and specificity, if possible. From this first model, we achieved a fairly high F1 score of 0.91, and our sensitivity was also quite high at 0.9761. This means that we achieve about 98% coverage of the positive (legal) class observations with this model. However, due to the data imbalance, we got a very low specificity value of 0.1425, so we only identify about 14% of our negative class samples correctly. This makes this model particularly bad at identifying people who do not think abortion should be legal and means the model has a high false positive rate. If this model were used in production, it would provide a misleading representation of constituent views and falsely make it seem that more people have positive attitudes towards abortion than they actually do. 
+
+Finally, this model achieved an overall accuracy of 84%, which is only very slightly higher than the calculated prevalence. Therefore, this model generally appears to have little predictive power. 
+
+## Build and Evalaute Initial Random Forest Ensemble Model
+
+Next, we chose to try an ensemble model to see whether we could get improved results. 
+
+```{r console = FALSE, message=FALSE, warning=FALSE, results = "hide"}
+# Calculate initial mtry
+mtry_tune <- function(x){
+  xx <- dim(x)[2]-1
+  sqrt(xx)
+}
+#mtry_tune(train)
+# Initial RF model
+set.seed(1984)	
+abortion_RF_mdl = randomForest(attitude~.,          
+                            train,     
+                            #y = NULL,           
+                            #subset = NULL,      
+                            #xtest = NULL,       
+                            #ytest = NULL,       
+                            ntree = 300,  # 300 tree       
+                            mtry = 3,  # mtry = 3 (calculated above)          
+                            replace = TRUE,      
+                            #classwt = NULL,     
+                            #strata = NULL,      
+                            sampsize = 100,      
+                            nodesize = 5,        
+                            #maxnodes = NULL,    
+                            importance = TRUE,   
+                            #localImp = FALSE,   
+                            norm.votes = TRUE,   
+                            do.trace = TRUE,     
+                            keep.forest = TRUE,  
+                            keep.inbag = TRUE)  
+```
+
+## Random Forest Outputs{.tabset}
+
+### Model Output 
+```{r}
+# Look at the abortion RF model
+abortion_RF_mdl
+```
+
+
+
+### Error Rate 
+```{r}
+err.rate_RFmdl1 <- as.data.frame(abortion_RF_mdl$err.rate)
+err.rate_RFmdl1
+```
+
+### Confusion Matrix 
+
+```{r}
+# predict performance using tune dataset
+abort_RF1_pred_tune = predict(abortion_RF_mdl, tune, type= "response", predict.all = TRUE, proximity = FALSE)
+abort_RF1_eval <- confusionMatrix(abort_RF1_pred_tune$aggregate, 
+                as.factor(tune$attitude), 
+                dnn=c("Prediction", "Actual"),
+                mode = "everything")
+table(tune$attitude)
+abort_RF1_eval
+```
+
+## Random Forest Analysis
+
+For this ensemble Random Forest model, we achieved a slightly higher sensitivity score (0.9885), but a specificity score that was about 5% lower than the decision tree model. This means that, while this model is better at identifying/covering the positive class than the decision tree, it is even worse than the tree model at detecting the negative class observations and has an even higher false positive rate. The F1 score for this model is quite high at 0.9134, but this is likely in large part due to the extremely high sensitivity value that is inflating it. 
+
+We achieved a comparable overall accuracy with the RF model that we did with the decision tree model, but a slightly lower balanced accuracy. Again, overall this model appears to have relatively little predictive power and would not be good to use in production as it would certainly overstate the positive views on abortion and miss many of the negative. The model appears to be learning the positive class almost exclusively due to the data imbalance and the minimal number of differentiating variables (as seen in the EDA). 
+
+
+## Tuning the Decision Tree Model 
+
+Next, we tried to tune the decision tree model as that model achieved a higher specificity. 
+
+```{r Tuning - change trainControl and add 30 as an option for boosting rounds}
+# Create a new trainControl object
+# Change the CV method (not repeated)
+fitControl_2 <- trainControl(method = "cv",
+                          number = 10, 
+                          returnResamp="all",
+                          allowParallel = TRUE) 
+# Add the 30 boosting rounds 
+grid_2 <- expand.grid(.winnow = c(TRUE,FALSE), 
+                    .trials=c(5, 10, 15, 20, 25, 30), 
+                    .model="tree")
+```
+
+```{r Train the tuning model, console = FALSE, warning=FALSE, message=FALSE}
+# Train new model
+set.seed(1984)
+abortion_dt2_mdl <- train(x=features,
+                y=target,
+                method="C5.0",
+                tuneGrid=grid_2,
+                trControl=fitControl_2)
+```
+
+## Tune Decision Tree Ouputs{.tabset}
+
+
+### Model Output
+```{r}
+# Look at tuned model output
+abortion_dt2_mdl
+```
+
+
+### Re-Sample Distributions
+```{r}
+# visualize the re-sample distributions
+xyplot(abortion_dt2_mdl,type = c("g", "p", "smooth"))
+```
+
+### Variable Importance
+```{r}
+# variable importance
+varImp(abortion_dt2_mdl)
+```
+
+
+### Confusion Matrix 
+```{r}
+# predict performance using tune dataset 
+abort_dt2_pred_tune = predict(abortion_dt2_mdl, tune, type= "raw")
+abort_dt2_eval <- confusionMatrix(as.factor(abort_dt2_pred_tune), 
+                as.factor(tune$attitude), 
+                dnn=c("Prediction", "Actual"), 
+                mode = "everything")
+table(tune$attitude)
+abort_dt2_eval 
+```
+  
+
+## Tune Decision Tree Analysis 
+
+In the tuned model, we made several changes. We removed the trials = 1 option, added trials = 30, and changed the cross validation method to be just "CV" (not repeated CV). Following these tuning changes, we observed that the variable importance measures in the models changed somewhat significantly. The variables "country," "religiosity," and "marital_status" were used in 100% of the models. It makes sense that "religiosity" and "marital_status" were included often based on our background research and the exploratory data analysis that we conducted. However, we were slightly surprised by the inclusion of the "country" variable in 100% of the models as it did not appear to have significant differentiating power. 
+
+In our key metrics we observed several improvements over our original decision tree model. The sensitivity improved very slightly, but we saw about a  3% increase in the specificity. Thus, this model is providing slightly better coverage of the negative class and a slightly lower false positive rate. The F1 score and balanced accuracy also improved marginally over the original model. The overall accuracy was also slightly higher. 
+
+Overall, this model performed the best of those we tested, but was still not terribly useful when predicting the negative class due to reasons discussed previously. Moving forward, changes to the model and/or the data used to train it would likely produce a more powerful model. These future improvements are discussed in the sections below.
+
+## Try a Naive Bayes Classifier 
+
+Finally, we tried to build a simple Naive Bayes classifier model to see whether it demonstrated improved results over the previously-built tree-based models. We would not move forward with this model, but wanted to use the metrics as a means of comparison. 
+
+```{r Naive Bayes Model, warning=FALSE, message=FALSE, console=FALSE}
+# Choose the features and classes
+features_nb <- train[,c(-10)]
+target_nb <- train$attitude
+# str(features)
+# str(target)
+# Cross validation process 
+fitControl_nb <- trainControl(method = "repeatedcv",
+                          number = 10,
+                          repeats = 5, 
+                          returnResamp="all",
+                          classProbs = TRUE,
+                          allowParallel = TRUE) 
+set.seed(2000)
+abortion_nb_mdl <- train(x=features_nb,
+                y=target_nb,
+                method="nb",
+                trControl=fitControl_nb,
+                verbose=TRUE)
+```
+
+## Naive Bayes Classifier Outputs{.tabset}
+
+### Model Output
+```{r}
+# Naive Bayes Model
+abortion_nb_mdl
+```
+
+
+### Confusion Matrix 
+```{r warning=FALSE, console=FALSE, message=FALSE}
+# predict performance 
+abort_nb_pred_tune = predict(abortion_nb_mdl, tune, type= "raw")
+abort_nb_eval <- confusionMatrix(as.factor(abort_nb_pred_tune), 
+                as.factor(tune$attitude), 
+                dnn=c("Prediction", "Actual"), 
+                mode = "everything")
+table(tune$attitude)
+abort_nb_eval 
+```
+
+## Naive Bayes Classifier Analysis 
+
+From the simple Naive Bayes classifier, we observed slight declines in sensitivity, overall accuracy, and F1, but we saw a large jump in the specificity value. This classifier seems to do a better job of correctly detecting more negative class values than the tree-based models. The balanced accuracy was also slightly higher. 
+
+Based strictly on the lower accuracy, we chose not to use the Naive Bayes classifier because it is possible to obtain similar or better results through randomly guessing the positive class based on the previously calculated prevalence value. 
+
+# Final Model Evaluation 
+
+We chose the tuned decision tree model as our "Final" model to move forward with. We evaluated the performance of the model using the test data set. 
+
+```{r}
+# predict performance using test dataset 
+abort_dtFINAL_pred_tune = predict(abortion_dt2_mdl, test, type= "raw")
+abort_dtFINAL_eval <- confusionMatrix(as.factor(abort_dtFINAL_pred_tune), 
+                as.factor(test$attitude), 
+                dnn=c("Prediction", "Actual"), 
+                mode = "everything")
+# table(tune$attitude)
+abort_dtFINAL_eval
+```
+
+In the final model, we observed similar model metric performance as with the tune dataset. The F1 score was quite high at 0.9119, which was likely due to the very high sensitivity of the model. The model had a sensitivity of 0.9775 on the test dataset, meaning that about 98% of all positive observations were properly classified. However, as we have consistently observed, the model performed fairly poorly on the negative class with a specificity of 0.1509, and has corresponded with a false positive rate of about 95%. 
+
+The final overall and balanced accuracies were comparable to those obtained with the tuning data. The overall accuracy is slightly higher than the calculated prevalence, which suggests that the model does have some predictive power over simple random guessing. 
+
+The fact that the we observed very little improvement in overall accuracy over the course of training, tuning, and testing signals that using the outputs of this model should be done with caution. 
+
+# Conclusions
+
+Based on the final outputs and metrics of our chosen model, we can see that the model itself has very little usefulness in understanding abortion in the real world. The model is good at predicting people who will have the view that abortion should be legal, but it performs poorly when predicting people who do not think it should be legal. In the context of our driving question, this is problematic because we would like to have a model that is good at identifying people who have the "illegal" view so that we can more effectively target outreach, ads, and education to these people. 
+
+Despite our model not having the best performance metrically, we were still able to learn more about variables that might be important in future models. For example, across the decision tree models we consistently observed that the religiosity variable was deemed to be an important predictor for determining abortion attitudes. While this aligns with previous research, it also validates the variable's value in a machine learning context. With this knowledge, we could move forward and gather more specific religiosity data such as: denomination, region of the country (some religions may be influenced by geographic region), contribution levels to church, ratings on spirituality, and others. 
+
+Given the size of the dataset and the limits placed on the model’s learning by the small negative class, this could not, as is, be put into production right now. In order to be made more reliable, we would need more expansive data on the negative class specifically. Additionally, given that the specificity of the Naive Bayes model in predicting negatives was the highest we observed, we would likely proceed with that type model as a basis for future work. The performance of the Naive Bayes classifier may have been better for the negative class due to the nature of the classifier: it uses prior probabilities of observations to predict future observations and is less prone to over-learning a positive class than the tree-based models. For further suggestions, please see the future recommendations section below.
+
+Finally, is important to remember that variables such as gender, household income, and age are protected classes. However, given that our project is targeting persons for lobbying and not actual policy, we decided against conducting a fairness assessment because no action we take (targeting people for ads/outreach) would disadvantage these protected classes.
+
+# Future Work and Recommendations
+
+If time permitted, there are many different ways we could have worked to improve our model and better answer our question. 
+
+One way we could improve our model in the future is by including more data, specifically including more balanced data. We saw early on that our target variable, abortion attitude, is very unbalanced with 84% of our population falling into the legal category. In the next iterations of this project, it would be helpful to have more data about people in the illegal category because we could learn more about the differences that exist between people who fall in the illegal and legal categories. Ultimately, having more balanced data would allow us to increase our models specificity and decrease our models false positive rate. 
+
+Another way we could improve our model in future iterations would be to gather more quantitative and qualitative demographic information on our survey participants. Right now, the data has rather basic demographic information about the participants. However, as we saw in our model more specific data, such as religiosity could be a great indicator of people’s attitudes towards abortion. It would be interesting if we knew more about people’s political beliefs or sexual habits and whether or not these would impact our models ability to predict. Either way, if we were able to know more specific demographic information the model would likely have a better chance at distinguishing and classifying people in the illegal and legal categories.
+
+Some other paths we would explore in the future are increasing the number of categories we place people in, instead of re-factoring into smaller binary groups. By increasing the number of categories people could fall into we are leveraging our data more fully and would likely have a positive impact on our models accuracy. We could also increase the number of categories abortion attitude falls into from the simplified illegal, legal back to it’s original five categories (only illegal in some scenarios, always illegal, no opinion, etc.). The reason we decreased the number of categories in our project was to increase model efficiency and to save time. However, more time would allow us to use a larger number of categorizations, which could potentially improve the accuracy of our model. Another way we might be able to increase accuracy is by including more continuous variables, which our current model is lacking. These could be variables such as salary and actual household income. These continuous variables have the potential to further increase our model’s accuracy.
